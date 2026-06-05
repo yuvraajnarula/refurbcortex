@@ -1,0 +1,125 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: refurbcortex-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file: .env
+    volumes:
+      - ./models:/app/models:ro
+      - ./data:/app/data
+      - .env:/app/.env:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: "6G"
+        reservations:
+          cpus: "1.0"
+          memory: "2G"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - refurb-net
+
+  streamlit:
+    image: python:3.11-slim
+    container_name: refurbcortex-ui
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    working_dir: /app
+    volumes:
+      - ./ui:/app/ui:ro
+      - ./data:/app/data
+    command: >
+      bash -c "pip install streamlit plotly pandas requests &&
+               streamlit run ui/analytics_dashboard.py --server.port 8501 --server.address 0.0.0.0 --server.headless true"
+    depends_on:
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: "2G"
+    networks:
+      - refurb-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: refurbcortex-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "256M"
+    networks:
+      - refurb-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: refurbcortex-prom
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: "512M"
+    networks:
+      - refurb-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: refurbcortex-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana-refurbcortex.json:/etc/grafana/provisioning/dashboards/dashboard.json:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=refurb_secure_2024
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "256M"
+    networks:
+      - refurb-net
+
+volumes:
+  redis-data:
+  prom-data:
+  grafana-data:
+
+networks:
+  refurb-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

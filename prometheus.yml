@@ -1,0 +1,6 @@
+scrape_configs:
+  - job_name: 'refurbcortex'
+    static_configs:
+      - targets: ['localhost:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s

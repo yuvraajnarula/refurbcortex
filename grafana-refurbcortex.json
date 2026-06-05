@@ -1,0 +1,15 @@
+{
+  "dashboard": {
+    "title": "RefurbCortex AI Production Dashboard",
+    "timezone": "browser",
+    "panels": [
+      {"title": "Request Rate (req/s)", "type": "timeseries", "targets": [{"expr": "rate(refurb_request_total[5m])"}]},
+      {"title": "P95 Latency (ms)", "type": "timeseries", "targets": [{"expr": "histogram_quantile(0.95, rate(refurb_request_latency_seconds_bucket[5m])) * 1000"}]},
+      {"title": "Error Rate %", "type": "timeseries", "targets": [{"expr": "rate(refurb_request_total{status=~\"5..\"}[5m]) / rate(refurb_request_total[5m]) * 100"}]},
+      {"title": "Model Confidence Distribution", "type": "heatmap", "targets": [{"expr": "rate(refurb_model_confidence_bucket[5m])"}]},
+      {"title": "EV SoH Gauge", "type": "gauge", "targets": [{"expr": "refurb_ev_soh_pred_pct"}]},
+      {"title": "Concept Drift Status", "type": "stat", "targets": [{"expr": "refurb_drift_active"}]}
+    ],
+    "time": {"from": "now-6h", "to": "now"}
+  }
+}

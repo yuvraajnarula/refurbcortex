@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
+data/chroma_db/
+*.pt
+*.onnx
+.DS_Store
+streamlit/
+.vscode/
+.idea/
+*.log
+scripts
+*.csv
