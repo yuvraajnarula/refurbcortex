@@ -84,7 +84,7 @@ graph LR
         V2 --> E2[Response Metadata + MLflow Tags]
         V3 --> E3[Idempotency Middleware]
         V4 --> E4[Tenacity Retries + Fallback Logic]
-        V5 --> E5[/override Endpoint + Feedback Loop]
+        V5 --> E5["/override Endpoint + Feedback Loop"]
         V6 --> E6[Privacy Cleanup Cron + Hashing Utils]
     end
 
