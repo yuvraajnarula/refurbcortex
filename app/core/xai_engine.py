@@ -7,7 +7,7 @@ from sklearn.ensemble import RandomForestRegressor
 from app.utils.logger import app_logger
 
 class XAIEngine:
-    def __init__(self, csv_path: str = "./data/inspections.csv", model_path: str = "./models/cost_xai_model.pkl"):
+    def __init__(self, csv_path: str = "./data/inspections.csv", model_path: str = "./data/cost_xai_model.pkl"):
         self.csv_path = csv_path
         self.model_path = model_path
         self.feature_cols = ["severity_score", "damage_area_cm2", "labor_hours", "rust_probability", "structural_integrity_score"]
@@ -20,7 +20,7 @@ class XAIEngine:
             return joblib.load(self.model_path)
         
         if not os.path.exists(self.csv_path):
-            app_logger.warning("⚠️ CSV not found. Using fallback model for demo.")
+            app_logger.warning("CSV not found. Using fallback model for demo.")
             model = RandomForestRegressor(n_estimators=20, max_depth=4, random_state=42)
             dummy_X = pd.DataFrame(np.random.rand(100, len(self.feature_cols)), columns=self.feature_cols)
             dummy_y = dummy_X["severity_score"] * 3000 + dummy_X["labor_hours"] * 800 + 2000

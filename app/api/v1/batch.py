@@ -8,12 +8,21 @@ from app.core.system2_agent import System2Agent
 from app.core.xai_engine import XAIEngine
 from app.services.metrics_drift import metrics
 from app.utils.versioning import get_system_metadata
+from functools import lru_cache
 from app.utils.logger import app_logger
 
 router = APIRouter()
-vision_engine = System1Vision()
-system2_engine = System2Agent()
-xai_engine = XAIEngine()
+@lru_cache(maxsize=1)
+def get_vision_engine():
+    return System1Vision()
+
+@lru_cache(maxsize=1)
+def get_system2_engine():
+    return System2Agent()
+
+@lru_cache(maxsize=1)
+def get_xai_engine():
+    return XAIEngine()
 
 class BatchItem(BaseModel):
     image_b64: str
@@ -31,7 +40,13 @@ class BatchRequest(BaseModel):
     priority: str = "standard"  # "standard" | "high"
 
 @router.post("/batch_predict")
-async def batch_predict(req: BatchRequest, api_key: str = Depends(verify_api_key)):
+async def batch_predict(
+    req: BatchRequest,
+    api_key: str = Depends(verify_api_key),
+    vision_engine: System1Vision = Depends(get_vision_engine),
+    system2_engine: System2Agent = Depends(get_system2_engine),
+    xai_engine: XAIEngine = Depends(get_xai_engine),
+):
     start_time = time.time()
     batch_id = f"BATCH_{uuid.uuid4().hex[:8].upper()}"
     max_concurrency = 5 if req.priority == "high" else 3

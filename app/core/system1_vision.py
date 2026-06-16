@@ -10,6 +10,7 @@ import uuid
 from app.config import settings
 from app.utils.logger import app_logger
 from app.core.dataloader import InspectionDataLoader
+from app.core.cost_estimator import CostEstimator, CostBreakdown
 from app.api.v1.schema import DamageRecord, SeverityLabel, DamageCategory, RecommendedAction, RepairPriority
 
 class System1Vision:
@@ -35,49 +36,44 @@ class System1Vision:
         app_logger.info("Initializing System 1 Vision Engine...")
         self.model = YOLO(settings.YOLO_MODEL_PATH)
         self.data_loader = InspectionDataLoader(settings.REPAIR_COST_PATH)
-        self.cost_df = self._load_cost_lookup()
+        self.cost_estimator = CostEstimator()
         app_logger.info("System 1 ready")
 
-    def _load_cost_lookup(self) -> pd.DataFrame:
-        """Load or generate repair cost lookup table"""
-        return pd.DataFrame({
-            "panel": ["side_mirror", "roof", "front_bumper", "left_door", "windshield"],
-            "category": ["scratch", "corrosion", "dent", "scratch", "glass"],
-            "severity": ["MINOR", "MODERATE", "MAJOR", "MINOR", "CRITICAL"],
-            "cost_min": [2000, 8000, 25000, 3000, 15000],
-            "cost_max": [8000, 25000, 60000, 12000, 45000],
-            "labor_hrs": [1.5, 6.0, 12.0, 3.0, 4.0]
-        })
-
-    def run_inference(self, image_bytes: bytes, metadata: dict) -> Tuple[np.ndarray, List[DamageRecord], Dict]:
+    def run_inference(self, image_bytes: bytes, metadata: dict) -> Tuple[np.ndarray, List[DamageRecord], Dict, Dict]:
+        """
+        Returns: (heatmap_np, damage_records, summary_dict, routing_decision)
+        Routing decision includes confidence calibration for metacognitive layer.
+        """
         try:
-            # 1. Preprocess image
             nparr = np.frombuffer(image_bytes, np.uint8)
             img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             if img is None:
                 raise ValueError("Invalid image format")
             h, w = img.shape[:2]
 
-            # 2. Run YOLO inference
             results = self.model(img, conf=settings.CONFIDENCE_THRESH, verbose=False)[0]
-            
-            # 3. Parse detections into your schema
             damage_records = self._parse_to_schema(results, metadata, img.shape)
-            
-            # 4. Generate annotated heatmap
             heatmap = self._generate_heatmap(img, damage_records)
-            
-            # 5. Compute summary metrics
             summary = self._compute_summary(damage_records)
             
-            return heatmap, damage_records, summary
+            # Metacognitive routing: aggregate confidence across detections
+            avg_conf = np.mean([r.ai_confidence for r in damage_records]) if damage_records else 0.0
+            routing = {
+                "status": "CONFIDENT" if avg_conf >= 0.75 else "UNCERTAIN",
+                "confidence": round(avg_conf, 3),
+                "action": "PROCEED" if avg_conf >= 0.75 else "FLAG_HUMAN",
+                "requires_human_review": avg_conf < 0.75
+            }
+            
+            return heatmap, damage_records, summary, routing
             
         except Exception as e:
             app_logger.error(f"System 1 inference failed: {e}")
-            raise
+            # Return deterministic fallback
+            fallback_route = {"status": "UNCERTAIN", "confidence": 0.0, "action": "ERROR", "requires_human_review": True}
+            return np.zeros((480, 640, 3), dtype=np.uint8), [], {"total_cost_median": 0, "detection_count": 0}, fallback_route
 
     def _parse_to_schema(self, results, metadata: dict, img_shape: tuple) -> List[DamageRecord]:
-        """Convert YOLO output to your rich DamageRecord schema"""
         records = []
         boxes = results.boxes
         if boxes is None:
@@ -88,18 +84,23 @@ class System1Vision:
             conf = float(boxes.conf[i])
             x1, y1, x2, y2 = boxes.xyxy[i].tolist()
             
-            # Map COCO class → damage category (placeholder logic)
             panel, category = self._infer_panel_category(cls_id, (x1,y1,x2,y2), img_shape)
             severity = self._estimate_severity(conf, category)
             
-            # Lookup costs from historical data
-            cost_range = self.data_loader.get_repair_cost_range(panel, category, severity.value)
-            labor = self._estimate_labor(panel, category, severity)
+            # Use production CostEstimator
+            cost: CostBreakdown = self.cost_estimator.estimate(
+                panel=panel,
+                severity=severity.value,
+                area_cm2=self._calc_area_cm2((x1,y1,x2,y2), img_shape),
+                city_tier=metadata.get("city_tier", "tier_2"),
+                vehicle_age=metadata.get("vehicle_age", 2024 - metadata.get("manufacture_year", 2018)),
+                odometer_km=metadata.get("odometer_km", 50000),
+                brand=metadata.get("vehicle_brand", "generic")
+            )
             
-            # Compute derived fields
-            area_cm2 = self._calc_area_cm2((x1,y1,x2,y2), img_shape)
-            rust_prob = 0.3 if category == "corrosion" else 0.05
-            structural_score = 0.95 if category not in ["structural"] else 0.6
+            labor = cost.labor_inr / self.cost_estimator.LABOR_RATES.get(metadata.get("city_tier", "tier_2"), 680)
+            rust_prob = 0.3 if category == DamageCategory.CORROSION else 0.05
+            structural_score = 0.95 if category not in [DamageCategory.STRUCTURAL] else 0.6
             
             record = DamageRecord(
                 inspection_id=f"INS_{uuid.uuid4().hex[:8].upper()}",
@@ -108,32 +109,33 @@ class System1Vision:
                 damage_subtype=metadata.get("damage_subtype"),
                 severity_label=severity,
                 severity_score=self._score_severity(severity, conf),
-                damage_area_cm2=round(area_cm2, 1),
-                repair_method=self.data_loader.get_panel_repair_methods(panel)[0],
-                repair_cost_min_inr=cost_range["min"],
-                repair_cost_max_inr=cost_range["max"],
-                labor_hours=labor,
-                paint_required=category in ["scratch", "corrosion"],
+                damage_area_cm2=round(self._calc_area_cm2((x1,y1,x2,y2), img_shape), 1),
+                repair_method=self._infer_repair_method(panel, category, severity),
+                repair_cost_min_inr=cost.cost_range_inr[0],
+                repair_cost_max_inr=cost.cost_range_inr[1],
+                labor_hours=round(labor, 1),
+                paint_required=cost.paint_inr > 0,
                 parts_replacement=severity == SeverityLabel.MAJOR,
                 safety_risk=self._assess_safety(category, severity),
                 drivable_status=severity != SeverityLabel.CRITICAL,
                 rust_probability=rust_prob,
                 structural_integrity_score=structural_score,
-                battery_health_impact=0.0,  # Extend for EV logic
+                battery_health_impact=0.0,
                 ai_confidence=round(conf, 3),
-                inspection_confidence=round(conf * 0.95, 3),  # Simulated calibration
-                recommended_action=self._recommend_action(severity, cost_range["median"]),
-                predicted_resale_impact_inr=-cost_range["median"] * 1.2,
-                expected_profit_after_repair_inr=cost_range["median"] * 0.3,
+                inspection_confidence=round(conf * 0.95, 3),
+                recommended_action=self._recommend_action(severity, cost.total_estimated_inr),
+                predicted_resale_impact_inr=-cost.total_estimated_inr * 1.2,
+                expected_profit_after_repair_inr=cost.total_estimated_inr * 0.3,
                 repair_priority=self._priority(severity, category),
                 agent_consensus_score=round(conf * 0.92, 3)
             )
+            # Attach bbox for heatmap rendering
+            record.bbox = [round(c, 1) for c in [x1, y1, x2, y2]]
             records.append(record)
         
         return records
 
     def _infer_panel_category(self, cls_id: int, bbox: tuple, img_shape: tuple) -> Tuple[str, DamageCategory]:
-        """Heuristic panel+category inference (replace with fine-tuned model later)"""
         x1, y1, x2, y2 = bbox
         h, w = img_shape
         center_x, center_y = (x1+x2)/2, (y1+y2)/2
@@ -154,7 +156,7 @@ class System1Vision:
 
     def _estimate_severity(self, conf: float, category: DamageCategory) -> SeverityLabel:
         if conf > 0.85:
-            return SeverityLabel.MAJOR if category in ["structural", "corrosion"] else SeverityLabel.MODERATE
+            return SeverityLabel.MAJOR if category in [DamageCategory.STRUCTURAL, DamageCategory.CORROSION] else SeverityLabel.MODERATE
         elif conf > 0.6:
             return SeverityLabel.MODERATE
         return SeverityLabel.MINOR
@@ -166,19 +168,25 @@ class System1Vision:
     def _calc_area_cm2(self, bbox: tuple, img_shape: tuple) -> float:
         x1, y1, x2, y2 = bbox
         h, w = img_shape
-        px_to_cm = 450 / w
-        area_px = (x2-x1) * (y2-y1)
+        px_to_cm = 450 / max(w, 1)
+        area_px = max(0, x2-x1) * max(0, y2-y1)
         return area_px * (px_to_cm ** 2)
 
-    def _estimate_labor(self, panel: str, category: DamageCategory, severity: SeverityLabel) -> float:
-        base = {"MINOR": 2, "MODERATE": 5, "MAJOR": 10, "CRITICAL": 20}[severity.value]
-        panel_mult = {"windshield": 1.5, "roof": 1.3, "side_mirror": 0.8}.get(panel, 1.0)
-        return round(base * panel_mult, 1)
+    def _infer_repair_method(self, panel: str, category: DamageCategory, severity: SeverityLabel) -> str:
+        if category == DamageCategory.CORROSION:
+            return "anti_rust_treatment" if severity != SeverityLabel.MAJOR else "panel_replacement"
+        if category == DamageCategory.GLASS:
+            return "windshield_repair" if severity == SeverityLabel.MINOR else "windshield_replacement"
+        if severity == SeverityLabel.MINOR:
+            return "touchup_paint"
+        if severity == SeverityLabel.MODERATE:
+            return "panel_repair"
+        return "panel_replacement"
 
     def _assess_safety(self, category: DamageCategory, severity: SeverityLabel) -> str:
-        if category == "structural" or severity == SeverityLabel.CRITICAL:
+        if category == DamageCategory.STRUCTURAL or severity == SeverityLabel.CRITICAL:
             return "critical"
-        if category in ["electrical", "glass"] and severity != SeverityLabel.MINOR:
+        if category in [DamageCategory.ELECTRICAL, DamageCategory.GLASS] and severity != SeverityLabel.MINOR:
             return "high"
         return "low"
 
@@ -192,13 +200,13 @@ class System1Vision:
     def _priority(self, severity: SeverityLabel, category: DamageCategory) -> RepairPriority:
         if severity in [SeverityLabel.MAJOR, SeverityLabel.CRITICAL]:
             return RepairPriority.HIGH
-        if category in ["structural", "electrical"]:
+        if category in [DamageCategory.STRUCTURAL, DamageCategory.ELECTRICAL]:
             return RepairPriority.MEDIUM
         return RepairPriority.LOW
 
     def _compute_summary(self, records: List[DamageRecord]) -> dict:
         if not records:
-            return {"total_cost_median": 0, "detection_count": 0, "priority_breakdown": {}}
+            return {"total_cost_median": 0, "detection_count": 0, "priority_breakdown": {}, "avg_confidence": 0.0}
         costs = [(r.repair_cost_min_inr + r.repair_cost_max_inr)/2 for r in records]
         return {
             "total_cost_median": round(sum(costs), 2),
@@ -212,16 +220,18 @@ class System1Vision:
 
     def _generate_heatmap(self, img: np.ndarray, records: List[DamageRecord]) -> np.ndarray:
         overlay = img.copy()
+        color_map = {
+            "MINOR": (0, 255, 0),
+            "MODERATE": (0, 165, 255),
+            "MAJOR": (0, 0, 255),
+            "CRITICAL": (0, 0, 139)
+        }
         for r in records:
-            x1, y1, x2, y2 = map(int, [100, 100, 300, 200]) 
-            color_map = {
-                "MINOR": (0, 255, 0),
-                "MODERATE": (0, 165, 255),
-                "MAJOR": (0, 0, 255),
-                "CRITICAL": (0, 0, 139)
-            }
+            if not hasattr(r, 'bbox') or not r.bbox:
+                continue
+            x1, y1, x2, y2 = map(int, r.bbox)
             color = color_map.get(r.severity_label.value, (255, 255, 255))
             cv2.rectangle(overlay, (x1, y1), (x2, y2), color, 3)
             label = f"{r.panel_affected}: ₹{r.repair_cost_min_inr:.0f}-{r.repair_cost_max_inr:.0f}"
-            cv2.putText(overlay, label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            cv2.putText(overlay, label, (max(x1, 5), max(y1-5, 20)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         return cv2.addWeighted(overlay, settings.HEATMAP_OPACITY, img, 1 - settings.HEATMAP_OPACITY, 0)

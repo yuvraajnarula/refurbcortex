@@ -1,0 +1,79 @@
+
+fastapi==0.136.3
+uvicorn[standard]==0.46.0
+python-multipart==0.0.28
+python-dotenv==1.0.1
+pandas
+# Validation & Config
+pydantic==2.13.4
+pydantic-settings==2.2.1
+email-validator==2.3.0
+
+# HTTP Clients
+httpx==0.27.2
+requests==2.34.1
+
+# Database
+SQLAlchemy==2.0.49
+alembic==1.18.4
+
+# AI / ML
+numpy==1.26.4
+scikit-learn==1.4.2
+onnx==1.21.0
+onnxruntime==1.26.0
+opencv-python-headless==4.9.0.80
+
+# Torch
+torch
+torchvision
+
+# LLM Providers
+groq
+ollama==0.1.8
+
+# Hugging Face
+transformers==4.57.6
+tokenizers==0.22.2
+huggingface_hub==0.36.2
+sentence-transformers==2.7.0
+safetensors==0.7.0
+slowapi
+# Speech
+faster-whisper==1.2.1
+ctranslate2==4.7.2
+pydub==0.25.1
+
+# Memory / RAG
+chromadb==0.4.24
+qdrant-client==1.18.0
+mem0ai==2.0.4
+
+# LangChain
+langchain==0.1.20
+langchain-community==0.0.38
+
+# Utilities
+orjson==3.11.9
+PyYAML==6.0.3
+loguru==0.7.2
+tqdm==4.67.3
+
+# Monitoring
+prometheus_client==0.25.0
+sentry-sdk==2.59.0
+
+# Serialization
+protobuf>=5.29.6,<7
+
+# Optional FastAPI Performance
+httptools==0.7.1
+uvloop==0.22.1
+watchfiles==1.1.1
+websockets==16.0
+gitpython
+shap
+ultralytics
+mlflow
+langdetect
+tenacity

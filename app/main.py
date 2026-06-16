@@ -30,7 +30,7 @@ from app.api.v1.twin import router as twin_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app_logger.info("🚀 RefurbCortex AI v0.5.0 Enterprise starting...")
+    app_logger.info("RefurbCortex AI v0.5.0 Enterprise starting...")
     cleanup_old_uploads()
     app.state.sync_queue = OfflineSyncQueue()
     
@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_drift_monitor())
     ]
     yield
-    app_logger.info("🛑 Shutting down...")
+    app_logger.info("Shutting down...")
     for t in tasks: t.cancel()
 
 async def _periodic_cleanup():
@@ -69,22 +69,19 @@ def create_app() -> FastAPI:
         redoc_url="/redoc"
     )
 
-    # 🔒 Middleware Stack
     limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute", "10/second"])
     app.state.limiter = limiter
     app.add_middleware(SlowAPIMiddleware)
     app.add_middleware(IdempotencyMiddleware)
-    app.add_middleware(PrometheusMiddleware)  # Skips /metrics internally
+    app.add_middleware(PrometheusMiddleware) 
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-    # 🔌 Core Routers
     app.include_router(inspection_router, prefix="/api/v1", tags=["Inspection"])
     app.include_router(feedback_router, prefix="/api/v1", tags=["Feedback"])
     app.include_router(hitl_router, prefix="/api/v1", tags=["Human-in-the-Loop"])
     app.include_router(batch_router, prefix="/api/v1", tags=["Batch"])
     app.include_router(webhook_router, prefix="/api/v1/webhooks", tags=["Webhooks"])
 
-    # 🧩 Conditional Moat Routers
     if os.getenv("ENABLE_INSURANCE", "false").lower() == "true":
         app.include_router(insurance_router, prefix="/api/v1/insurance", tags=["Insurance"])
     if os.getenv("ENABLE_VOICE", "false").lower() == "true":
@@ -92,7 +89,6 @@ def create_app() -> FastAPI:
     if os.getenv("ENABLE_TWIN", "false").lower() == "true":
         app.include_router(twin_router, prefix="/api/v1/twin", tags=["Digital Twin"])
 
-    # 📡 Observability & Health
     app.add_api_route("/metrics", metrics_endpoint, tags=["Observability"])
     @app.get("/health")
     async def health_check():

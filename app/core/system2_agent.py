@@ -1,6 +1,6 @@
 import os
 import json
-import ollama
+from groq import Groq
 from mem0 import Memory
 from typing import List, Dict
 from app.config import settings
@@ -9,10 +9,40 @@ from app.api.v1.schema import AgentRecommendation
 
 class System2Agent:
     def __init__(self):
-        self.model = settings.SYSTEM2_MODEL_NAME
-        # mem0 defaults to local SQLite if no API key provided
-        self.mem0 = Memory()
-        app_logger.info(f"✅ System 2 Agent initialized: {self.model} + mem0 (local)")
+        self.model = settings.SYSTEM2_MODEL_NAME  
+        
+        config = {
+            "llm": {
+                "provider": "groq",
+                "config": {
+                    "model": self.model,
+                    "api_key": os.getenv("GROQ_API_KEY"),
+                    "temperature": 0.3,
+                    "max_tokens": 256
+                }
+            },
+            "embedder": {
+                "provider": "huggingface",
+                "config": {
+                    "model": "sentence-transformers/all-MiniLM-L6-v2"
+                }
+            },
+            "vector_store": {
+                "provider": "qdrant",
+                "config": {
+                    "collection_name": "refurbcortex_memories",
+                    "embedding_model_dims": 384,   # dimension of all-MiniLM-L6-v2
+                    "host": os.getenv("QDRANT_HOST", "qdrant"),
+                    "port": int(os.getenv("QDRANT_PORT", 6333))
+                }
+            }
+        }
+        self.mem0 = Memory.from_config(config)
+        
+        # Keep a direct Groq client for the analysis method
+        self.groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        
+        app_logger.info(f"System 2 Agent initialized: {self.model} + mem0 (Groq + HF)")
 
     def _load_context(self, vehicle_id: str, metadata: dict) -> str:
         try:
@@ -26,7 +56,7 @@ class System2Agent:
                 context += "\nHistorical context:\n" + "\n".join([f"- {m['memory']}" for m in memories])
             return context
         except Exception as e:
-            app_logger.warning(f"⚠️ mem0 context load failed: {e}")
+            app_logger.warning(f"mem0 context load failed: {e}")
             return f"Vehicle: {metadata['vehicle_brand']} {metadata['vehicle_model']}"
 
     def analyze_tradeoffs(self, damages: List[dict], metadata: dict, inventory_target_days: int = 45) -> AgentRecommendation:
@@ -63,13 +93,14 @@ BUSINESS CONSTRAINTS:
 - Market margin threshold: 8%
 """
         try:
-            response = ollama.chat(
-                model=self.model,
+            chat_completion = self.groq_client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
-                format="json",
-                options={"temperature": 0.3, "num_predict": 256}
+                model=self.model,
+                temperature=0.3,
+                max_tokens=256,
+                response_format={"type": "json_object"}
             )
-            result = json.loads(response["message"]["content"])
+            result = json.loads(chat_completion.choices[0].message.content)
             
             rec = result.get("recommendation", "PARTIAL")
             if rec not in ["REPAIR", "AS_IS", "PARTIAL"]:
@@ -83,8 +114,7 @@ BUSINESS CONSTRAINTS:
                 repair_priority_items=result.get("repair_priority_items", [])
             )
         except Exception as e:
-            app_logger.error(f"❌ System 2 LLM failed: {e}")
-            # Deterministic fallback
+            app_logger.error(f"System 2 LLM failed: {e}")
             total_cost = sum(d["repair_cost_max_inr"] for d in damages)
             return AgentRecommendation(
                 recommendation="AS_IS" if total_cost > 50000 else "REPAIR",
@@ -101,4 +131,4 @@ BUSINESS CONSTRAINTS:
                 user_id=case_id
             )
         except Exception as e:
-            app_logger.warning(f"⚠️ mem0 logging failed: {e}")
+            app_logger.warning(f"mem0 logging failed: {e}")
