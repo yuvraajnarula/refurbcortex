@@ -53,6 +53,7 @@ class DamageRecord(BaseModel):
     panel_affected: str
     damage_category: DamageCategory
     damage_subtype: Optional[str]
+    bbox: Optional[List[float]] = None
     severity_label: SeverityLabel
     severity_score: float = Field(ge=0, le=10)
     damage_area_cm2: float
