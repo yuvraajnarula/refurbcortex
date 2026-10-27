@@ -38,7 +38,7 @@ def _extract_prices(text: str) -> List[float]:
             prices.append(float(val.replace(",", "")))
         except ValueError:
             continue
-    return prices
+    return [p for p in prices if 500 <= p <= 500000]
 
 def _normalize_result(brand: str, panel: str, category: str, snippets: List[str]) -> Dict:
     all_text = " ".join(snippets)
