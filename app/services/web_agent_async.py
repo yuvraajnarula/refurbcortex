@@ -42,7 +42,7 @@ def _extract_prices(text: str) -> List[float]:
 def _normalize_result(brand: str, panel: str, category: str, snippets: List[str]) -> Dict:
     all_text = " ".join(snippets)
     prices = _extract_prices(all_text)
-    prices = [p for p in prices if 100 <= p <= 500000]
+    prices = [p for p in prices if 500 <= p <= 500000]
     oem = after = labor = None
     if len(prices) >= 2:
         oem, after = sorted(prices)[-1], sorted(prices)[0]
