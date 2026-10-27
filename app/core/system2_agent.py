@@ -10,41 +10,50 @@ from app.api.v1.schema import AgentRecommendation
 class System2Agent:
     def __init__(self):
         self.model = settings.SYSTEM2_MODEL_NAME  
+        self.mem0 = None
+        self.groq_client = None
         
-        config = {
-            "llm": {
-                "provider": "groq",
-                "config": {
-                    "model": self.model,
-                    "api_key": os.getenv("GROQ_API_KEY"),
-                    "temperature": 0.3,
-                    "max_tokens": 256
-                }
-            },
-            "embedder": {
-                "provider": "huggingface",
-                "config": {
-                    "model": "sentence-transformers/all-MiniLM-L6-v2"
-                }
-            },
-            "vector_store": {
-                "provider": "qdrant",
-                "config": {
-                    "collection_name": "refurbcortex_memories",
-                    "embedding_model_dims": 384,   # dimension of all-MiniLM-L6-v2
-                    "host": os.getenv("QDRANT_HOST", "qdrant"),
-                    "port": int(os.getenv("QDRANT_PORT", 6333))
+        try:
+            config = {
+                "llm": {
+                    "provider": "groq",
+                    "config": {
+                        "model": self.model,
+                        "api_key": os.getenv("GROQ_API_KEY"),
+                        "temperature": 0.3,
+                        "max_tokens": 256
+                    }
+                },
+                "embedder": {
+                    "provider": "huggingface",
+                    "config": {
+                        "model": "sentence-transformers/all-MiniLM-L6-v2"
+                    }
+                },
+                "vector_store": {
+                    "provider": "qdrant",
+                    "config": {
+                        "collection_name": "refurbcortex_memories",
+                        "embedding_model_dims": 384,   # dimension of all-MiniLM-L6-v2
+                        "host": os.getenv("QDRANT_HOST", "qdrant"),
+                        "port": int(os.getenv("QDRANT_PORT", 6333))
+                    }
                 }
             }
-        }
-        self.mem0 = Memory.from_config(config)
+            self.mem0 = Memory.from_config(config)
+        except Exception as e:
+            app_logger.warning(f"mem0 init failed (running without memory): {e}")
         
-        # Keep a direct Groq client for the analysis method
-        self.groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        try:
+            self.groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        except Exception as e:
+            app_logger.warning(f"Groq client init failed (running without LLM): {e}")
         
-        app_logger.info(f"System 2 Agent initialized: {self.model} + mem0 (Groq + HF)")
+        app_logger.info(f"System 2 Agent initialized: {self.model}")
 
     def _load_context(self, vehicle_id: str, metadata: dict) -> str:
+        if self.mem0 is None:
+            return f"Vehicle: {metadata.get('vehicle_brand', '')} {metadata.get('vehicle_model', '')}"
         try:
             memories = self.mem0.search(
                 query=f"Past inspection decisions for {vehicle_id}",
@@ -61,6 +70,17 @@ class System2Agent:
 
     def analyze_tradeoffs(self, damages: List[dict], metadata: dict, inventory_target_days: int = 45) -> AgentRecommendation:
         context = self._load_context(metadata.get("inspection_id", "UNKNOWN"), metadata)
+        
+        if self.groq_client is None:
+            total_cost = sum(d["repair_cost_max_inr"] for d in damages)
+            app_logger.warning("Groq client unavailable; using cost-threshold fallback")
+            return AgentRecommendation(
+                recommendation="AS_IS" if total_cost > 50000 else "REPAIR",
+                reasoning="Fallback: LLM unavailable. High/Low cost threshold applied.",
+                expected_net_margin_pct=-5.0 if total_cost > 50000 else 12.0,
+                turnover_risk="HIGH" if total_cost > 50000 else "LOW",
+                repair_priority_items=[d["panel_affected"] for d in damages[:2]]
+            )
         
         damage_lines = []
         for d in damages:
@@ -125,6 +145,8 @@ BUSINESS CONSTRAINTS:
             )
 
     def log_decision(self, case_id: str, rec: AgentRecommendation):
+        if self.mem0 is None:
+            return
         try:
             self.mem0.add(
                 f"Case {case_id}: {rec.recommendation} | Margin: {rec.expected_net_margin_pct}% | Risk: {rec.turnover_risk}",
