@@ -7,7 +7,14 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 import asyncio, os
 from app.utils.versioning import get_system_metadata
+from app.config import settings
 from dotenv import load_dotenv
+
+try:
+    import redis.asyncio as aioredis
+    _REDIS_AVAILABLE = True
+except Exception:
+    _REDIS_AVAILABLE = False
 
 load_dotenv()
 
@@ -33,7 +40,17 @@ async def lifespan(app: FastAPI):
     app_logger.info("RefurbCortex AI v0.5.0 Enterprise starting...")
     cleanup_old_uploads()
     app.state.sync_queue = OfflineSyncQueue()
-    
+
+    app.state.redis = None
+    if _REDIS_AVAILABLE:
+        try:
+            app.state.redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+            await app.state.redis.ping()
+            app_logger.info("Redis client connected")
+        except Exception as e:
+            app_logger.warning(f"Redis not available, continuing without it: {e}")
+            app.state.redis = None
+
     tasks = [
         asyncio.create_task(_periodic_cleanup()),
         asyncio.create_task(_periodic_sync()),
@@ -42,6 +59,11 @@ async def lifespan(app: FastAPI):
     yield
     app_logger.info("Shutting down...")
     for t in tasks: t.cancel()
+    if getattr(app.state, "redis", None):
+        try:
+            await app.state.redis.close()
+        except Exception:
+            pass
 
 async def _periodic_cleanup():
     while True: await asyncio.sleep(3600); cleanup_old_uploads()
