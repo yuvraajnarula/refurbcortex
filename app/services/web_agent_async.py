@@ -4,6 +4,7 @@ from collections import OrderedDict
 import httpx
 from app.utils.logger import app_logger
 from app.config import settings
+from app.middleware.prometheus_metrics import record_web_request, record_web_circuit
 
 MODE_SEARCHES = {"standard": 5, "reasoning": 12, "deep": 30}
 
@@ -74,25 +75,33 @@ class AsyncWebEnricher:
     async def fetch(self, brand: str, panel: str, category: str) -> Dict:
         key = f"{brand}_{panel}_{category}"
         cached = self.cache.get(key)
-        if cached: return cached
+        if cached:
+            record_web_request(settings.WEB_MODE or "standard", "cache", 0.0)
+            return cached
 
-        if self.circuit_open: return self._fallback(brand, panel, category)
+        if self.circuit_open:
+            record_web_circuit(True)
+            return self._fallback(brand, panel, category)
 
         mode = settings.WEB_MODE or "standard"
         n_searches = MODE_SEARCHES.get(mode, 5)
         queries = self._build_queries(brand, panel, category, n_searches)
 
+        start = time.time()
         try:
             snippets = await self._search_parallel(queries)
             data = _normalize_result(brand, panel, category, snippets)
             self.cache.put(key, data)
             self.failures = 0
+            record_web_request(mode, "duckduckgo", time.time() - start, fallback=False)
             return data
         except Exception as e:
             self.failures += 1
             app_logger.error(f"❌ Web agent failed: {e}")
+            record_web_request(mode, "duckduckgo", time.time() - start, fallback=True)
             if self.failures >= 3:
                 self.circuit_open = True
+                record_web_circuit(True)
                 asyncio.create_task(self._reset_circuit())
             return self._fallback(brand, panel, category)
 

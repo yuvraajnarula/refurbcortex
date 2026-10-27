@@ -19,7 +19,7 @@ except Exception:
 load_dotenv()
 
 from app.middleware.idempotency import IdempotencyMiddleware
-from app.middleware.prometheus_metrics import PrometheusMiddleware, metrics_endpoint, record_drift
+from app.middleware.prometheus_metrics import PrometheusMiddleware, metrics_endpoint, record_drift, record_redis_up
 from app.utils.privacy import cleanup_old_uploads
 from app.services.offline_sync import OfflineSyncQueue
 from app.services.metrics_drift import metrics
@@ -46,10 +46,14 @@ async def lifespan(app: FastAPI):
         try:
             app.state.redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
             await app.state.redis.ping()
+            record_redis_up(True)
             app_logger.info("Redis client connected")
         except Exception as e:
+            record_redis_up(False)
             app_logger.warning(f"Redis not available, continuing without it: {e}")
             app.state.redis = None
+    else:
+        record_redis_up(False)
 
     tasks = [
         asyncio.create_task(_periodic_cleanup()),

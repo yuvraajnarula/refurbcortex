@@ -11,6 +11,7 @@ from app.config import settings
 from app.utils.logger import app_logger
 from app.core.dataloader import InspectionDataLoader
 from app.core.cost_estimator import CostEstimator, CostBreakdown
+from app.middleware.prometheus_metrics import record_seg_available, record_seg_mask_coverage
 from app.api.v1.schema import DamageRecord, SeverityLabel, DamageCategory, RecommendedAction, RepairPriority
 
 class System1Vision:
@@ -41,11 +42,14 @@ class System1Vision:
         if settings.YOLO_SEG_MODEL_PATH and Path(settings.YOLO_SEG_MODEL_PATH).exists():
             try:
                 self.seg_model = YOLO(settings.YOLO_SEG_MODEL_PATH)
+                record_seg_available(True)
                 app_logger.info(f"Segmentation model loaded: {settings.YOLO_SEG_MODEL_PATH}")
             except Exception as e:
+                record_seg_available(False)
                 app_logger.warning(f"Segmentation model load failed (bbox fallback): {e}")
                 self.seg_model = None
-        app_logger.info("System 1 ready")
+        else:
+            record_seg_available(False)
 
     def run_inference(self, image_bytes: bytes, metadata: dict) -> Tuple[np.ndarray, List[DamageRecord], Dict, Dict]:
         """
@@ -112,6 +116,7 @@ class System1Vision:
                         mask_area_cm2 = mask_area_px * (px_to_cm ** 2)
                         bbox_area_px = max(0, x2-x1) * max(0, y2-y1)
                         coverage = mask_area_px / max(bbox_area_px, 1)
+                        record_seg_mask_coverage(coverage)
                         # Use mask-derived area when it meaningfully overlaps the box
                         if coverage > 0.15:
                             area_cm2 = mask_area_cm2
