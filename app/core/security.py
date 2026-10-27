@@ -9,6 +9,9 @@ security = HTTPBearer()
 limiter = Limiter(key_func=get_remote_address)
 
 def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
-    if settings.API_KEY and credentials.credentials != settings.API_KEY:
+    if not settings.API_KEY:
+        app_logger.warning("API_KEY not configured; denying all requests (fail closed)")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API key not configured")
+    if credentials.credentials != settings.API_KEY:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired API key")
     return credentials.credentials
