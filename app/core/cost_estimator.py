@@ -109,7 +109,7 @@ class CostEstimator:
             vehicle_age = max(0, int(vehicle_age))
             odometer_km = max(0, int(odometer_km))
             
-            cache_key = f"{panel}_{severity}_{city_tier}_{brand}"
+            cache_key = f"{panel}_{severity}_{city_tier}_{brand}_{int(area_cm2)}_{vehicle_age}_{int(odometer_km // 10000)}"
             cached = self._get_cached(cache_key)
             if cached:
                 return CostBreakdown(**cached)
