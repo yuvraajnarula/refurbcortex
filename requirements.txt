@@ -78,3 +78,5 @@ mlflow
 langdetect
 tenacity
 weasyprint
+redis
+duckduckgo-search
