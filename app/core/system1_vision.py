@@ -195,6 +195,8 @@ class System1Vision:
             return RecommendedAction.ESCALATE_TO_HUMAN
         if severity == SeverityLabel.MINOR and est_cost < 5000:
             return RecommendedAction.REFURBISH
+        if est_cost > 20000:
+            return RecommendedAction.SELL_AS_IS
         return RecommendedAction.REFURBISH
 
     def _priority(self, severity: SeverityLabel, category: DamageCategory) -> RepairPriority:
