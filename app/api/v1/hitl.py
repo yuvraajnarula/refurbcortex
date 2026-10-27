@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from app.core.feedback_loop import FeedbackLoop
+from app.core.security import verify_api_key
 from app.utils.logger import app_logger
 from datetime import datetime
 
@@ -15,7 +16,7 @@ class HITLOverride(BaseModel):
     grader_id: str
 
 @router.post("/override")
-async def submit_override(override: HITLOverride):
+async def submit_override(override: HITLOverride, api_key: str = Depends(verify_api_key)):
     """
     Human grader overrides AI decision.
     This logs a high-weight feedback entry and updates memory.

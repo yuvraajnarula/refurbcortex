@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from app.core.feedback_loop import FeedbackLoop
+from app.core.security import verify_api_key
 from app.utils.logger import app_logger
 
 router = APIRouter()
@@ -14,7 +15,7 @@ class FeedbackRequest(BaseModel):
     notes: str = ""
 
 @router.post("/feedback")
-async def submit_feedback(req: FeedbackRequest):
+async def submit_feedback(req: FeedbackRequest, api_key: str = Depends(verify_api_key)):
     try:
         result = feedback_engine.record(
             inspection_id=req.inspection_id,
