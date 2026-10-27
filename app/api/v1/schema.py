@@ -91,15 +91,6 @@ class AgentRecommendation(BaseModel):
     turnover_risk: Literal["LOW", "MED", "HIGH"]
     repair_priority_items: List[str] = []
 
-class InspectionResponse(BaseModel):
-    status: Literal["success", "error", "uncertain"]
-    inspection_id: str
-    heatmap_b64: Optional[str] = None
-    damage_records: List[DamageRecord]
-    summary: dict
-    routing: RoutingDecision
-    recommendation: Optional[AgentRecommendation] = None
-    meta: dict
 
 class SHAPDriver(BaseModel):
     feature: str
