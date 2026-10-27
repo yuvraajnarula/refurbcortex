@@ -6,19 +6,29 @@ from app.core.xai_engine import XAIEngine
 from app.api.v1.schema import InspectionResponse, RoutingDecision, AgentRecommendation
 from app.utils.versioning import get_system_metadata
 from app.core.security import verify_api_key
-from app.services.web_agent_async import AsyncWebEnricher
 from app.services.metrics_drift import metrics
 from app.api.v1.webhooks import _status_db
 from app.utils.logger import app_logger
 import base64, cv2, time, uuid
+from datetime import datetime
 from app.middleware.prometheus_metrics import record_confidence, record_ev_soh
 from app.services.mlflow_registry import mlflow_reg
+from app.core.ev_soh_forecaster import EVSoHForecaster
 
 router = APIRouter()
 vision_engine = System1Vision()
 system2_engine = System2Agent()
 xai_engine = XAIEngine()
-web_agent = AsyncWebEnricher()
+ev_forecaster = None
+
+def _get_ev_forecaster():
+    global ev_forecaster
+    if ev_forecaster is None:
+        try:
+            ev_forecaster = EVSoHForecaster()
+        except Exception as e:
+            app_logger.warning(f"EV SoH forecaster init failed: {e}")
+    return ev_forecaster
 
 @router.post("/predict", response_model=InspectionResponse)
 async def predict_damage(
@@ -47,7 +57,7 @@ async def predict_damage(
         "city": city, 
         "city_tier": city_tier, 
         "inspection_id": insp_id,
-        "vehicle_age": 2024 - manufacture_year if manufacture_year < 2024 else 0,
+        "vehicle_age": datetime.now().year - manufacture_year if manufacture_year < datetime.now().year else 0,
         "odometer_km": 50000  # Extend via form param if needed
     }
 
@@ -60,7 +70,6 @@ async def predict_damage(
         
         if avg_route["status"] == "CONFIDENT" and records:
             try:
-                enrich_data = await web_agent.fetch(vehicle_brand, panel_affected, damage_category)
                 rec_dicts = [r.model_dump() for r in records]
                 
                 rec = system2_engine.analyze_tradeoffs(rec_dicts, meta_dict)
@@ -71,7 +80,13 @@ async def predict_damage(
                 # Prometheus metrics
                 record_confidence(avg_route["confidence"])
                 if fuel_type.lower() == "ev" and rec:
-                    soh_val = float(rec.reasoning.split("EV SoH: ")[1].split("%")[0]) if "EV SoH: " in rec.reasoning else 85.0
+                    forecaster = _get_ev_forecaster()
+                    age = meta_dict.get("vehicle_age", 0)
+                    odometer = meta_dict.get("odometer_km", 50000)
+                    if forecaster:
+                        soh_val = forecaster.predict(age, odometer)["predicted_soh_pct"]
+                    else:
+                        soh_val = 85.0
                     record_ev_soh(vehicle_brand, vehicle_model, soh_val)
 
                 # MLflow tracking
