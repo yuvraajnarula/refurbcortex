@@ -23,6 +23,18 @@ class Settings(BaseSettings):
     CONFIDENCE_ROUTING_THRESH: float = 0.8
     CHROMA_DB_PATH: str = "./data/chroma_db"
 
+    # Web enrichment (DuckDuckGo)
+    WEB_PROVIDER: str = "duckduckgo"
+    WEB_MODE: str = "standard"  # standard | reasoning | deep
+    WEB_SEARCH_BASE_URL: str = "https://html.duckduckgo.com/html/"
+
+    # Segmentation model (damage mask)
+    YOLO_SEG_MODEL_PATH: str = "./models/yolov8s-seg.pt"
+
+    # Redis status store
+    REDIS_URL: str = "redis://localhost:6379"
+    REDIS_STATUS_TTL_SECONDS: int = 86400
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
