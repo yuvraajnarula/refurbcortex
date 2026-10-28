@@ -13,3 +13,4 @@ streamlit/
 *.log
 scripts
 *.csv
+.kilo
